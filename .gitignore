@@ -1,0 +1,19 @@
+# Local secrets
+.env
+*.key
+*.pem
+
+# PostgreSQL
+pgdata/
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

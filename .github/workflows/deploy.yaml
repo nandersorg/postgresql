@@ -1,0 +1,38 @@
+name: Deploy PostgreSQL to MicroK8s
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure namespace
+        run: |
+          microk8s kubectl apply -f k8s/namespace.yaml
+
+      - name: Apply init ConfigMap
+        run: |
+          microk8s kubectl apply -f k8s/postgres-init.yaml
+
+      - name: Apply PostgreSQL manifest
+        run: |
+          microk8s kubectl apply -f k8s/postgres.yaml
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          echo "Waiting for PostgreSQL deployment..."
+          microk8s kubectl wait --for=condition=available --timeout=5m \
+            deployment/postgres -n postgresql
+
+      - name: Verify deployment
+        run: |
+          echo "PostgreSQL deployment status:"
+          microk8s kubectl get pods -n postgresql
+          microk8s kubectl get svc -n postgresql
+          echo "Connection string: postgres://postgres:password@postgres.postgresql.svc.cluster.local:5432/postgres"

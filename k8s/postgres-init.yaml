@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: postgresql
+data:
+  01-airflow-schema.sql: |
+    -- Airflow schema for news sentiment analysis
+    CREATE SCHEMA IF NOT EXISTS airflow;
+
+    CREATE TABLE IF NOT EXISTS airflow.articles (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      url TEXT,
+      sentiment VARCHAR(10) NOT NULL CHECK (sentiment IN ('POSITIVE', 'NEGATIVE')),
+      scraped_at TIMESTAMP NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_airflow_articles_scraped_at
+      ON airflow.articles(scraped_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_airflow_articles_sentiment
+      ON airflow.articles(sentiment);
+
+    CREATE INDEX IF NOT EXISTS idx_airflow_articles_created_at
+      ON airflow.articles(created_at DESC);
+
+    -- Create airflow user
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'airflow') THEN
+        CREATE USER airflow WITH PASSWORD 'airflow-db-password';
+      END IF;
+    END
+    $$;
+
+    GRANT USAGE ON SCHEMA airflow TO airflow;
+    GRANT CREATE ON SCHEMA airflow TO airflow;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA airflow TO airflow;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA airflow TO airflow;
+
+  02-ml-platform-schema.sql: |
+    -- ML Platform schema for model metadata and results
+    CREATE SCHEMA IF NOT EXISTS ml_platform;
+
+    CREATE TABLE IF NOT EXISTS ml_platform.models (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      version TEXT,
+      framework TEXT,
+      path TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS ml_platform.training_runs (
+      id SERIAL PRIMARY KEY,
+      model_id INTEGER REFERENCES ml_platform.models(id) ON DELETE CASCADE,
+      epoch INTEGER,
+      loss FLOAT,
+      accuracy FLOAT,
+      val_loss FLOAT,
+      val_accuracy FLOAT,
+      timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ml_platform_training_runs_model_id
+      ON ml_platform.training_runs(model_id);
+
+    CREATE INDEX IF NOT EXISTS idx_ml_platform_training_runs_timestamp
+      ON ml_platform.training_runs(timestamp DESC);
+
+    -- Create ml_platform user
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ml_platform') THEN
+        CREATE USER ml_platform WITH PASSWORD 'ml_platform-db-password';
+      END IF;
+    END
+    $$;
+
+    GRANT USAGE ON SCHEMA ml_platform TO ml_platform;
+    GRANT CREATE ON SCHEMA ml_platform TO ml_platform;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ml_platform TO ml_platform;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ml_platform TO ml_platform;
