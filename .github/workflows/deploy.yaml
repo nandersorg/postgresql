@@ -15,6 +15,8 @@ jobs:
       - name: Ensure namespace
         run: |
           microk8s kubectl apply -f k8s/namespace.yaml
+          echo "Waiting for namespace to be active..."
+          microk8s kubectl wait --for=create namespace/airflow --timeout=15s
 
       - name: Create postgres-secret from GitHub Secrets
         run: |
@@ -24,7 +26,6 @@ jobs:
             --from-literal=ML_PLATFORM_DB_PASSWORD='${{ secrets.ML_PLATFORM_DB_PASSWORD }}' \
             --namespace=postgresql \
             --dry-run=client -o yaml | microk8s kubectl apply -f -
-          echo "✓ Secret created from GitHub Secrets"
 
       - name: Apply init ConfigMap
         run: |
@@ -33,6 +34,14 @@ jobs:
       - name: Apply PostgreSQL manifest
         run: |
           microk8s kubectl apply -f k8s/postgres.yaml
+
+      - name: Wait for PVCs to bind
+        run: |
+          echo "Checking volume reservation status..."
+          # Selects all PVCs within the namespace simultaneously instead of looping
+          microk8s kubectl wait --namespace=airflow \
+            --for=jsonpath='{.status.phase}'=Bound \
+            pvc --all --timeout=2m
 
       - name: Wait for PostgreSQL to be ready
         run: |
