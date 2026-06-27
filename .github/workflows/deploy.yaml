@@ -16,6 +16,16 @@ jobs:
         run: |
           microk8s kubectl apply -f k8s/namespace.yaml
 
+      - name: Create postgres-secret from GitHub Secrets
+        run: |
+          microk8s kubectl create secret generic postgres-secret \
+            --from-literal=POSTGRES_PASSWORD='${{ secrets.POSTGRES_PASSWORD }}' \
+            --from-literal=AIRFLOW_DB_PASSWORD='${{ secrets.AIRFLOW_DB_PASSWORD }}' \
+            --from-literal=ML_PLATFORM_DB_PASSWORD='${{ secrets.ML_PLATFORM_DB_PASSWORD }}' \
+            --namespace=postgresql \
+            --dry-run=client -o yaml | microk8s kubectl apply -f -
+          echo "✓ Secret created from GitHub Secrets"
+
       - name: Apply init ConfigMap
         run: |
           microk8s kubectl apply -f k8s/postgres-init.yaml
@@ -35,4 +45,7 @@ jobs:
           echo "PostgreSQL deployment status:"
           microk8s kubectl get pods -n postgresql
           microk8s kubectl get svc -n postgresql
-          echo "Connection string: postgres://postgres:password@postgres.postgresql.svc.cluster.local:5432/postgres"
+          echo ""
+          echo "To connect from your machine:"
+          echo "  microk8s kubectl port-forward -n postgresql svc/postgres 5432:5432"
+          echo "  psql -h localhost -U postgres"

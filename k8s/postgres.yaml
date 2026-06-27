@@ -11,18 +11,8 @@ spec:
       storage: 10Gi
   storageClassName: microk8s-hostpath
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: postgres-secret
-  namespace: postgresql
-type: Opaque
-stringData:
-  postgres-password: postgres-change-me-in-production
-  # For airflow schema user
-  airflow-password: airflow-db-password
-  # For ml_platform schema user
-  ml_platform-password: ml_platform-db-password
+# NOTE: Secret is created via GitHub Actions workflow with values from GitHub Secrets
+# DO NOT commit secret values to this file!
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -51,11 +41,21 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: postgres-secret
-                  key: postgres-password
+                  key: POSTGRES_PASSWORD
             - name: POSTGRES_DB
               value: postgres
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+            - name: AIRFLOW_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: AIRFLOW_DB_PASSWORD
+            - name: ML_PLATFORM_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: ML_PLATFORM_DB_PASSWORD
           volumeMounts:
             - mountPath: /var/lib/postgresql/data
               name: postgres-data
