@@ -10,13 +10,15 @@ jobs:
   deploy:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
+      # Gefikst: Wacht nu op de postgresql namespace in plaats van airflow
       - name: Ensure namespace
         run: |
           microk8s kubectl apply -f k8s/namespace.yaml
           echo "Waiting for namespace to be active..."
-          microk8s kubectl wait --for=create namespace/airflow --timeout=15s
+          microk8s kubectl wait --for=create namespace/postgresql --timeout=15s
 
       - name: Create postgres-secret from GitHub Secrets
         run: |
@@ -35,23 +37,31 @@ jobs:
         run: |
           microk8s kubectl apply -f k8s/postgres.yaml
 
+      # Gefikst: Namespace aangepast van airflow naar postgresql
       - name: Wait for PVCs to bind
         run: |
-          echo "Checking volume reservation status..."
-          # Selects all PVCs within the namespace simultaneously instead of looping
-          microk8s kubectl wait --namespace=airflow \
+          echo "Checking volume reservation status in postgresql namespace..."
+          microk8s kubectl wait --namespace=postgresql \
             --for=jsonpath='{.status.phase}'=Bound \
             pvc --all --timeout=2m
 
+      # NIEUW: Herstart postgres zodra de configmap of deployment wijzigt,
+      # zodat het database-script opnieuw geëvalueerd wordt.
+      - name: Trigger update refresh (Rollout Restart)
+        run: |
+          echo "Applying live updates to PostgreSQL pods..."
+          microk8s kubectl rollout restart deployment/postgres -n postgresql
+
+      # Gefikst: Vervangen door rollout status om hangen bij fouten te voorkomen
       - name: Wait for PostgreSQL to be ready
         run: |
-          echo "Waiting for PostgreSQL deployment..."
-          microk8s kubectl wait --for=condition=available --timeout=5m \
-            deployment/postgres -n postgresql
+          echo "Monitoring database startup and init scripts execution..."
+          microk8s kubectl rollout status deployment/postgres -n postgresql --timeout=5m
 
       - name: Verify deployment
+        if: always()
         run: |
-          echo "PostgreSQL deployment status:"
+          echo "=== PostgreSQL Deployment Status ==="
           microk8s kubectl get pods -n postgresql
           microk8s kubectl get svc -n postgresql
           echo ""
