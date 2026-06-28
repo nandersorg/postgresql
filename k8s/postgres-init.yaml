@@ -8,14 +8,36 @@ data:
     #!/bin/bash
     set -e
 
-    # This script is executed as postgres user by the PostgreSQL entrypoint
-    # Passwords come from environment variables set by the Deployment
-
+    # 1. Maak de fysieke databases en users aan (uitgevoerd op de hoofd-db 'postgres')
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-      -- Airflow schema for news sentiment analysis
-      CREATE SCHEMA IF NOT EXISTS airflow;
+      -- Maak users aan als ze nog niet bestaan
+      DO \$\$
+      BEGIN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'airflow') THEN
+          CREATE USER airflow WITH PASSWORD '$AIRFLOW_DB_PASSWORD';
+        END IF;
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ml_platform') THEN
+          CREATE USER ml_platform WITH PASSWORD '$ML_PLATFORM_DB_PASSWORD';
+        END IF;
+      END
+      \$\$;
 
-      CREATE TABLE IF NOT EXISTS airflow.articles (
+      -- Maak dedicated databases aan voor de applicaties
+      SELECT 'CREATE DATABASE airflow' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'airflow')\gexec
+      SELECT 'CREATE DATABASE ml_platform' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ml_platform')\gexec
+
+      -- Geef de users rechten op hun eigen database
+      GRANT ALL PRIVILEGES ON DATABASE airflow TO airflow;
+      GRANT ALL PRIVILEGES ON DATABASE ml_platform TO ml_platform;
+    EOSQL
+
+    # 2. Richt de 'ml_platform' database in (hier komen je applicatietabellen en NOS data)
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "ml_platform" <<-EOSQL
+      -- Rechten rechtzetten voor de user binnen deze db
+      GRANT ALL ON SCHEMA public TO ml_platform;
+
+      -- Je tabel voor de gescrapte NOS artikelen (is nu onderdeel van je ML data platform!)
+      CREATE TABLE IF NOT EXISTS articles (
         id SERIAL PRIMARY KEY,
         title TEXT NOT NULL,
         description TEXT,
@@ -25,28 +47,12 @@ data:
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      CREATE INDEX IF NOT EXISTS idx_airflow_articles_scraped_at
-        ON airflow.articles(scraped_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_articles_scraped_at ON articles(scraped_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_articles_sentiment ON articles(sentiment);
+      CREATE INDEX IF NOT EXISTS idx_articles_created_at ON articles(created_at DESC);
 
-      CREATE INDEX IF NOT EXISTS idx_airflow_articles_sentiment
-        ON airflow.articles(sentiment);
-
-      CREATE INDEX IF NOT EXISTS idx_airflow_articles_created_at
-        ON airflow.articles(created_at DESC);
-
-      -- Create airflow user
-      DO \$\$
-      BEGIN
-        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'airflow') THEN
-          CREATE USER airflow;
-        END IF;
-      END
-      \$\$;
-
-      -- ML Platform schema for model metadata and results
-      CREATE SCHEMA IF NOT EXISTS ml_platform;
-
-      CREATE TABLE IF NOT EXISTS ml_platform.models (
+      -- ML Platform specifieke tabellen
+      CREATE TABLE IF NOT EXISTS models (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         version TEXT,
@@ -55,9 +61,9 @@ data:
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      CREATE TABLE IF NOT EXISTS ml_platform.training_runs (
+      CREATE TABLE IF NOT EXISTS training_runs (
         id SERIAL PRIMARY KEY,
-        model_id INTEGER REFERENCES ml_platform.models(id) ON DELETE CASCADE,
+        model_id INTEGER REFERENCES models(id) ON DELETE CASCADE,
         epoch INTEGER,
         loss FLOAT,
         accuracy FLOAT,
@@ -66,35 +72,15 @@ data:
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      CREATE INDEX IF NOT EXISTS idx_ml_platform_training_runs_model_id
-        ON ml_platform.training_runs(model_id);
+      CREATE INDEX IF NOT EXISTS idx_training_runs_model_id ON training_runs(model_id);
+      CREATE INDEX IF NOT EXISTS idx_training_runs_timestamp ON training_runs(timestamp DESC);
 
-      CREATE INDEX IF NOT EXISTS idx_ml_platform_training_runs_timestamp
-        ON ml_platform.training_runs(timestamp DESC);
-
-      -- Create ml_platform user
-      DO \$\$
-      BEGIN
-        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'ml_platform') THEN
-          CREATE USER ml_platform;
-        END IF;
-      END
-      \$\$;
+      -- Zorg dat de ml_platform user overal bij kan
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ml_platform;
+      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ml_platform;
     EOSQL
 
-    # Set passwords from environment variables
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
-      ALTER USER airflow WITH PASSWORD '$AIRFLOW_DB_PASSWORD';
-      ALTER USER ml_platform WITH PASSWORD '$ML_PLATFORM_DB_PASSWORD';
-
-      -- Grant permissions
-      GRANT USAGE ON SCHEMA airflow TO airflow;
-      GRANT CREATE ON SCHEMA airflow TO airflow;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA airflow TO airflow;
-      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA airflow TO airflow;
-
-      GRANT USAGE ON SCHEMA ml_platform TO ml_platform;
-      GRANT CREATE ON SCHEMA ml_platform TO ml_platform;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ml_platform TO ml_platform;
-      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ml_platform TO ml_platform;
+    # 3. Richt de 'airflow' database in (rechten openzetten zodat Airflow zelf zijn tabellen mag maken)
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "airflow" <<-EOSQL
+      GRANT ALL ON SCHEMA public TO airflow;
     EOSQL
